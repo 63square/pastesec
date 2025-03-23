@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PasteSec - Demo</title>
+</head>
+
+<body>
+  <textarea id="message" cols="100" rows="25"></textarea>
+  <br>
+  <input type="password" id="password" placeholder="Password">
+  <button id="encrypt">Encrypt</button>
+  <button id="decrypt">Decrypt</button>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", _ => {
+      WebAssembly.instantiateStreaming(fetch("./wasm"), {
+        env: {
+          print: (x) => console.log(x)
+        }
+      }).then(wasmLoaded);
+    })
+
+    function cloneBuf(buf) {
+      const clone = new Uint8Array(buf.length);
+      clone.set(buf);
+      return clone;
+    }
+    
+    function saltFromEncrypted(encrypted) {
+      return encrypted.slice(16, 16 + 24)
+    }
+
+    function decryptMessage(decryptFn, memory, encrypted, key) {
+      const memoryView = new Uint8Array(memory.buffer);
+
+      memoryView.set(key);
+      memoryView.subarray(32).set(encrypted);
+      const len = decryptFn(0, encrypted.length);
+      if (len == -1) {
+        return null
+      }
+
+      const output = new Uint8Array(memory.buffer, 0, len);
+
+      return new TextDecoder().decode(output);
+    }
+
+    function passwordToKey(deriveFn, memory, input, salt) {
+      const memoryView = new Uint8Array(memory.buffer);
+      memoryView.set(salt);
+
+      const {
+        written
+      } = new TextEncoder().encodeInto(input, memoryView.subarray(24));
+      const len = deriveFn(0, written);
+      if (len == -1) {
+        return null
+      }
+
+      const key = new Uint8Array(memory.buffer, 0, len);
+      return cloneBuf(key)
+    }
+
+    function encryptMessage(encryptFn, memory, message, key, salt) {
+      const memoryView = new Uint8Array(memory.buffer);
+
+      memoryView.set(key);
+      memoryView.subarray(32).set(salt);
+
+      const nonce = new Uint8Array(24);
+      crypto.getRandomValues(nonce);
+      memoryView.subarray(32 + 24).set(nonce);
+
+      const {
+        written
+      } = new TextEncoder().encodeInto(message, memoryView.subarray(32 + 24 + 24));
+      const len = encryptFn(0, written);
+
+      const encrypted = new Uint8Array(memory.buffer, 0, len);
+      return cloneBuf(encrypted);
+    }
+
+    function wasmLoaded(pastesec) {
+      const {
+        deriveKey,
+        decrypt,
+        encrypt,
+        memory
+      } = pastesec.instance.exports;
+
+      const message = document.querySelector("#message");
+      const password = document.querySelector("#password");
+
+      const encryptBtn = document.querySelector("#encrypt");
+      const decryptBtn = document.querySelector("#decrypt");
+      
+      encryptBtn.onclick = () => {
+        const salt = new Uint8Array(24);
+        crypto.getRandomValues(salt);
+
+        const key = passwordToKey(deriveKey, memory, password.value, salt);
+        const encrypted = encryptMessage(encrypt, memory, message.value, key, salt);
+
+        message.value = btoa(String.fromCharCode(...encrypted));
+      }
+
+      decryptBtn.onclick = () => {
+        const decoded = atob(message.value);
+        const encrypted = new Uint8Array(decoded.length);
+        for (let i = 0; i < decoded.length; i++) {
+          encrypted[i] = decoded.charCodeAt(i);
+        }
+        
+        const salt = saltFromEncrypted(encrypted);
+        const key = passwordToKey(deriveKey, memory, password.value, salt);
+
+        const decrypted = decryptMessage(decrypt, memory, encrypted, key);
+        message.value = decrypted;
+
+        if (decrypted == null) {
+          alert("Unable to decrypt!")
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
