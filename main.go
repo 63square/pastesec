@@ -59,6 +59,11 @@ func DownloadPaste(ctx context.Context, client objectstorage.ObjectStorageClient
 func main() {
 	ctx := context.Background()
 
+	bindAddr, ok := os.LookupEnv("BIND")
+	if !ok {
+		bindAddr = ":8080"
+	}
+
 	namespaceName, ok := os.LookupEnv("NAMESPACE")
 	if !ok {
 		log.Fatalln("NAMESPACE environment variable is not set")
@@ -124,5 +129,5 @@ func main() {
 	})
 
 	fmt.Println("Server listening on :8080")
-	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
+	log.Fatal(http.ListenAndServe(bindAddr, nil))
 }
